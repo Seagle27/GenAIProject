@@ -9,3 +9,5 @@ Pillow
 pandas
 torchaudio
 datasets
+soundfile
+sox
