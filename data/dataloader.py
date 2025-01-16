@@ -44,11 +44,11 @@ class VGGSound(Dataset):
             size=512,
             interpolation='bicubic',
     ):
-        video_lst = "video/"
-        audio_lst = "audio/"
+        video_lst = "video"
+        audio_lst = "audio"
 
-        self.video = args.data_dir + video_lst
-        self.audio = args.data_dir + audio_lst
+        self.video = os.path.join(args.data_dir, video_lst)
+        self.audio = os.path.join(args.data_dir, audio_lst)
         self.vggsound = "data/VGGSound/vggsound.csv"
         self.video_path = list()
         self.audio_path = list()
