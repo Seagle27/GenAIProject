@@ -19,6 +19,7 @@ import math
 import os
 from typing import Optional
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
@@ -39,6 +40,7 @@ from tqdm.auto import tqdm
 from transformers import CLIPTokenizer
 from modules.AudioToken.AudioToken import AudioTokenWrapper
 from data.dataloader import VGGSound
+from info_nce import multi_positive_info_nce_loss
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.12.0")
@@ -53,7 +55,7 @@ def save_progress(embedder, save_embedder):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
-    parser.add_argument("--save_steps", type=int, default=1000,
+    parser.add_argument("--save_steps", type=int, default=100,
                         help="Save learned_embeds.bin every X updates steps.")
     parser.add_argument("--pretrained_model_name_or_path", type=str, default='stabilityai/stable-diffusion-2',
                         help="Path to pretrained model or model identifier from huggingface.co/models.")
@@ -125,9 +127,11 @@ def parse_args():
                         help="Regularization lambda - l2")
     parser.add_argument("--lambda_c", type=float, default=0.01,
                         help="Regularization lambda - classification loss")
+    parser.add_argument("--lambda_d", type=float, default=0.01,
+                        help="Regularization lambda - infoNCE loss")
     parser.add_argument("--run_name", type=str, default='AudioToken',
                         help="Insert run name")
-    parser.add_argument("--cosine_loss", type=bool, default=False,
+    parser.add_argument("--cosine_loss", type=bool, default=False,    #TODO: CHANGED. DEFAULT FALSE
                         help="Use classification loss")
     parser.add_argument("--filter_frames", type=bool, default=True,
                         help="Choose whether or not to use previously detected frames as informative frames.",)
@@ -140,6 +144,9 @@ def parse_args():
                         help="Select the number of seconds of audio you want in each training-sample.")
     parser.add_argument("--lora", type=bool, default=False,
                         help="Whether train Lora layers or not")
+    parser.add_argument("--infoNCE_loss", type=bool, default=True,
+                        help="Use infoNCE loss")
+
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
@@ -366,13 +373,19 @@ def train():
                     input_ids = tokenizer(batch['label']).data['input_ids']
                     input_ids = [ids[1:-1] for ids in input_ids]
                     target = torch.cat([txt_embeddings[ids].mean(dim=0).view(1, -1) for ids in input_ids])
-                    if args.multiple_tokens:
-                        embedds = audio_token[:, -1, :]
-                    else:
-                        embedds = audio_token
+                    # if args.multiple_tokens:
+                    #     embedds = audio_token[:, -1, :]
+                    # else:
+                    embedds = audio_token
                     cosine_sim = F.cosine_similarity(embedds, target, dim=1).mean()
                     cosine_penalty = (1 - cosine_sim) ** 2
                     loss += args.lambda_c * cosine_penalty
+
+                if args.infoNCE_loss:
+                    input_ids = tokenizer(batch['label']).data['input_ids']
+                    input_ids = [ids[1:-1] for ids in input_ids]
+                    label_embedding = torch.cat([txt_embeddings[ids].mean(dim=0).view(1, -1) for ids in input_ids])
+                    loss += args.lambda_d * multi_positive_info_nce_loss(audio_token, label_embedding, input_ids)
 
                 accelerator.backward(loss)
                 optimizer.step()
@@ -389,8 +402,9 @@ def train():
                     if accelerator.is_main_process:
                         save_path = os.path.join(args.output_dir, f"weights/{args.run_name}_learned_embeds-{global_step}.bin")
                         save_progress(accelerator.unwrap_model(model).embedder, save_path)
-                        save_path = os.path.join(args.output_dir, f"weights/{args.run_name}_lora_layers_learned_embeds-{global_step}.bin")
-                        save_progress(accelerator.unwrap_model(model).lora_layers, save_path)
+                        if args.lora:
+                            save_path = os.path.join(args.output_dir, f"weights/{args.run_name}_lora_layers_learned_embeds-{global_step}.bin")
+                            save_progress(accelerator.unwrap_model(model).lora_layers, save_path)
 
             logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
@@ -402,7 +416,7 @@ def train():
     # save the progress
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        save_path_embedder = os.path.join(args.output_dir, f"learned_embeds.bin")
+        save_path_embedder = os.path.join(args.output_dir, f"learned_embeds_1.bin")
         save_progress(accelerator.unwrap_model(model).embedder, save_path_embedder)
         if args.lora:
             save_path_lora = os.path.join(args.output_dir, f"learned_embeds_lora_layers.bin")
