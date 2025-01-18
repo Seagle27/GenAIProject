@@ -2,12 +2,14 @@ diffusers
 accelerate
 torchvision
 transformers>=4.25.1
-ftfy
+ftfy==6.3.1
 tensorboard
 opencv-python
 Pillow
 pandas
 torchaudio
-datasets
+datasets==3.2.0
 soundfile
 sox
+fsspec==2024.6.1
+gcsfs==2024.6.1
