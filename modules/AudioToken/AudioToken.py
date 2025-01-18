@@ -29,8 +29,7 @@ class AudioTokenWrapper(torch.nn.Module):
             args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
         )
 
-        checkpoint = torch.load(
-            'models/BEATs/BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2.pt')
+        checkpoint = torch.load(args.pretrained_audio_encoder_path)
         cfg = BEATsConfig(checkpoint['cfg'])
         self.aud_encoder = BEATs(cfg)
         self.aud_encoder.load_state_dict(checkpoint['model'])

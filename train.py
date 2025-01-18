@@ -59,6 +59,11 @@ def parse_args():
                         help="Save learned_embeds.bin every X updates steps.")
     parser.add_argument("--pretrained_model_name_or_path", type=str, default='stabilityai/stable-diffusion-2',
                         help="Path to pretrained model or model identifier from huggingface.co/models.")
+    parser.add_argument("--pretrained_audio_encoder_path", type=str,
+                        default='models/BEATs/BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2.pt', help="Path to "
+                                                                                                     "pretrained "
+                                                                                                     "audio encoder"
+                                                                                                     "(BEATs) model")
     parser.add_argument("--revision", type=str, default=None, required=False,
                         help="Revision of pretrained model identifier from huggingface.co/models.")
     parser.add_argument("--tokenizer_name", type=str, default=None,
