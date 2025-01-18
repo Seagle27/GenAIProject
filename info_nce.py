@@ -11,7 +11,7 @@ def multi_positive_info_nce_loss(audio_emb, label_emb, class_labels, temperature
     logits = torch.matmul(audio_emb, label_emb.T) / temperature
 
     # Create a mask for same-class positives
-    positive_mask = create_positive_mask_exact(class_labels)
+    positive_mask = create_positive_mask_exact(class_labels).to(audio_emb.device)
 
     # Compute probabilities
     exp_logits = torch.exp(logits)
@@ -20,7 +20,7 @@ def multi_positive_info_nce_loss(audio_emb, label_emb, class_labels, temperature
 
     # Compute loss: -log(sum(positive_logits) / sum(exp_logits))
     positive_probs = positive_logits.sum(dim=1) / denominator.squeeze()
-    loss = -torch.log(positive_probs).mean()
+    loss = -torch.log(positive_probs + 1e-8).mean()  # Add epsilon for numerical stability
     return loss
 
 
