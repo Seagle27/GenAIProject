@@ -98,17 +98,16 @@ def inference(args):
 
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
 
-    folder_path = "output/"
-    if not os.path.exists(folder_path):
-        os.makedirs(folder_path)
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
 
-    folder_path = "output/imgs/"
-    if not os.path.exists(folder_path):
-        os.makedirs(folder_path)
+    save_dir = os.path.join(args.output_dir, 'imgs')
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
 
-    folder_path = f"output/imgs/{args.run_name}/"
-    if not os.path.exists(folder_path):
-        os.makedirs(folder_path)
+    save_dir = os.path.join(save_dir, args.run_name)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
 
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
@@ -204,7 +203,7 @@ def inference(args):
             unet=accelerator.unwrap_model(model).unet,
         ).to(accelerator.device)
         image = pipeline(prompt, num_inference_steps=args.num_inference_steps, guidance_scale=7.5).images[0]
-        image.save(f'{args.output_dir}/imgs/{args.run_name}/{batch["full_name"][0]}.png')
+        image.save(os.path.join(save_dir, f'{batch["full_name"][0]}.png'))
 
 
 if __name__ == "__main__":
