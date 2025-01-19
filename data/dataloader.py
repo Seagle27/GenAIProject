@@ -74,9 +74,9 @@ class VGGSound(Dataset):
                 self.eval_output_dir = os.path.join(args.output_dir, 'selected_input_frames')
                 if not os.path.exists(self.eval_output_dir):
                     os.makedirs(self.eval_output_dir)
-                self.filter_frames = args.filter_frames
-                self.filter_unmatch_videos = args.filter_unmatch_videos
-                self.filter_low_quality_imgs = args.filter_low_quality_imgs
+                self.filter_frames = True
+                self.filter_unmatch_videos = True
+                self.filter_low_quality_imgs = True
             else:
                 self.filter_frames = False
                 self.filter_unmatch_videos = False
