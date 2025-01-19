@@ -58,15 +58,18 @@ class VGGSound(Dataset):
         self.data_set = args.data_set
         self.df = pd.read_csv(self.vggsound)
         self.input_length = args.input_length
-        self.eval_mode = args.eval_mode
+
         if self.data_set == 'train':
+            self.eval_mode = False
             self.center_crop = args.center_crop
             self.filter_frames = args.filter_frames
             self.filter_unmatch_videos = args.filter_unmatch_videos
             self.filter_low_quality_imgs = args.filter_low_quality_imgs
 
         else:
+            self.eval_mode = args.eval_mode
             self.center_crop = False
+
             if self.eval_mode:
                 self.eval_output_dir = os.path.join(args.output_dir, 'selected_input_frames')
                 if not os.path.exists(self.eval_output_dir):
