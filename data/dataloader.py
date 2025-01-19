@@ -68,6 +68,9 @@ class VGGSound(Dataset):
         else:
             self.center_crop = False
             if self.eval_mode:
+                self.eval_output_dir = os.path.join(args.output_dir, 'selected_input_frames')
+                if not os.path.exists(self.eval_output_dir):
+                    os.makedirs(self.eval_output_dir)
                 self.filter_frames = args.filter_frames
                 self.filter_unmatch_videos = args.filter_unmatch_videos
                 self.filter_low_quality_imgs = args.filter_low_quality_imgs
@@ -154,7 +157,7 @@ class VGGSound(Dataset):
         video.release()
         # Return the frame
         if self.eval_mode:
-            output_path = os.path.join(self.video, f'eval_frames/inference_frame_{ytid}.png')
+            output_path = os.path.join(self.eval_output_dir, f'selected_frame_{ytid}.png')
             cv2.imwrite(output_path, frame)
         return frame
 
