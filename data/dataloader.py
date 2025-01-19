@@ -58,16 +58,23 @@ class VGGSound(Dataset):
         self.data_set = args.data_set
         self.df = pd.read_csv(self.vggsound)
         self.input_length = args.input_length
+        self.eval_mode = args.eval_mode
         if self.data_set == 'train':
             self.center_crop = args.center_crop
             self.filter_frames = args.filter_frames
             self.filter_unmatch_videos = args.filter_unmatch_videos
             self.filter_low_quality_imgs = args.filter_low_quality_imgs
+
         else:
             self.center_crop = False
-            self.filter_frames = False
-            self.filter_unmatch_videos = False
-            self.filter_low_quality_imgs = False
+            if self.eval_mode:
+                self.filter_frames = args.filter_frames
+                self.filter_unmatch_videos = args.filter_unmatch_videos
+                self.filter_low_quality_imgs = args.filter_low_quality_imgs
+            else:
+                self.filter_frames = False
+                self.filter_unmatch_videos = False
+                self.filter_low_quality_imgs = False
 
         with open('constants/best_frames.json', 'r') as file:
             self.frames = json.load(file)
@@ -146,6 +153,9 @@ class VGGSound(Dataset):
         # Release the speech_video file
         video.release()
         # Return the frame
+        if self.eval_mode:
+            output_path = os.path.join(self.video, f'eval_frames/inference_frame_{ytid}.png')
+            cv2.imwrite(output_path, frame)
         return frame
 
     def img_proc(self, vid, rand_sec):
