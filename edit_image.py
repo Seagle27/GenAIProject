@@ -1,32 +1,16 @@
-import argparse
-import logging
 import os
-import torch
+import argparse
 import torch.utils.checkpoint
-from torch.utils.data import Dataset
-import datasets
-import diffusers
-import transformers
-from accelerate import Accelerator
-from accelerate.logging import get_logger
-from accelerate.utils import set_seed
 from diffusers import StableDiffusionPipeline
-from diffusers.utils import check_min_version
 
-# TODO: remove and import from diffusers.utils when the new version of diffusers is released
-from transformers import CLIPTokenizer
-
-from data.dataloader import VGGSound
-from modules.AudioToken.AudioToken import AudioTokenWrapper
-
-# Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-check_min_version("0.12.0")
-
-logger = get_logger(__name__)
+from inference import inference
+from ptp.prompt_to_prompt import *
+from ptp.null_txt_inversion import *
+from ptp.ptp_consts import *
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Simple example of a training script.")
+    parser = argparse.ArgumentParser(description="Simple example of a image editing script.")
     parser.add_argument("--learned_embeds", type=str, default='output/embedder_learned_embeds.bin',
                         help="Path to pretrained embedder")
     parser.add_argument("--learned_embeds_lora", type=str, default='output/lora_layers_learned_embeds.bin',
@@ -76,14 +60,16 @@ def parse_args():
     parser.add_argument("--run_name", type=str, default='AudioToken',
                         help="Insert run name")
     parser.add_argument("--set_size", type=str, default='full')
-    parser.add_argument("--prompt", type=str, default='a photo of <*>, 4k, high resolution')
+    parser.add_argument("--image_prompt", type=str, default='a cat sitting next to a mirror')
+    parser.add_argument("--edit_prompt", type=str, default='a <*> sitting next to a mirror')
+    parser.add_argument("--image_path", type=str, default=None)
+    # parser.add_argument("--image_path", type=str, default=None)
     parser.add_argument("--input_length", type=int, default=10,
                         help="Select the number of seconds of audio you want in each test-sample.")
     parser.add_argument("--lora", type=bool, default=False,
                         help="Whether load Lora layers or not")
     parser.add_argument("--eval_mode", type=bool, default=False,
                         help="Whether save ground truth frame or not")
-
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -96,98 +82,94 @@ def parse_args():
     return args
 
 
-def inference(args):
-    logging_dir = os.path.join(args.output_dir, args.logging_dir)
+@torch.no_grad()
+def text2image_ldm_stable(
+        model,
+        prompt: List[str],
+        controller,
+        num_inference_steps: int = 50,
+        guidance_scale: Optional[float] = 7.5,
+        generator: Optional[torch.Generator] = None,
+        latent: Optional[torch.FloatTensor] = None,
+        uncond_embeddings=None,
+        start_time=50,
+        return_type='image'
+):
+    batch_size = len(prompt)
+    ptp_utils.register_attention_control(model, controller)
+    height = width = 512
 
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
-
-    save_dir = os.path.join(args.output_dir, 'imgs')
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-
-    save_dir = os.path.join(save_dir, args.run_name)
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-
-    accelerator = Accelerator(
-        mixed_precision=args.mixed_precision,
-        log_with=args.report_to,
-        project_dir=logging_dir,
+    text_input = model.tokenizer(
+        prompt,
+        padding="max_length",
+        max_length=model.tokenizer.model_max_length,
+        truncation=True,
+        return_tensors="pt",
     )
-
-    # Make one log on every process with the configuration for debugging.
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO,
-    )
-    logger.info(accelerator.state, main_process_only=False)
-    if accelerator.is_local_main_process:
-        datasets.utils.logging.set_verbosity_warning()
-        transformers.utils.logging.set_verbosity_warning()
-        diffusers.utils.logging.set_verbosity_info()
-    else:
-        datasets.utils.logging.set_verbosity_error()
-        transformers.utils.logging.set_verbosity_error()
-        diffusers.utils.logging.set_verbosity_error()
-
-    # If passed along, set the training seed now.
-    if args.seed is not None:
-        set_seed(args.seed)
-
-    # Load tokenizer
-    if args.tokenizer_name:
-        tokenizer = CLIPTokenizer.from_pretrained(args.tokenizer_name)
-    elif args.pretrained_model_name_or_path:
-        tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer")
-
-    weight_dtype = torch.float32
-    if accelerator.mixed_precision == "fp16":
-        weight_dtype = torch.float16
-    elif accelerator.mixed_precision == "bf16":
-        weight_dtype = torch.bfloat16
-
-    model = AudioTokenWrapper(args, accelerator).to(weight_dtype).eval()
-
-    # Add the placeholder token in tokenizer
-    num_added_tokens = tokenizer.add_tokens(args.placeholder_token)
-    if num_added_tokens == 0:
-        raise ValueError(
-            f"The tokenizer already contains the token {args.placeholder_token}. Please pass a different"
-            " `placeholder_token` that is not already in the tokenizer."
+    text_embeddings = model.text_encoder(text_input.input_ids.to(model.device))[0]
+    max_length = text_input.input_ids.shape[-1]
+    if uncond_embeddings is None:
+        uncond_input = model.tokenizer(
+            [""] * batch_size, padding="max_length", max_length=max_length, return_tensors="pt"
         )
+        uncond_embeddings_ = model.text_encoder(uncond_input.input_ids.to(model.device))[0]
+    else:
+        uncond_embeddings_ = None
 
-    # Enable TF32 for faster training on Ampere GPUs,
-    # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
-    if args.allow_tf32:
-        torch.backends.cuda.matmul.allow_tf32 = True
+    latent, latents = ptp_utils.init_latent(latent, model, height, width, generator, batch_size)
+    model.scheduler.set_timesteps(num_inference_steps)
+    for i, t in enumerate(tqdm(model.scheduler.timesteps[-start_time:])):
+        if uncond_embeddings_ is None:
+            context = torch.cat([uncond_embeddings[i].expand(*text_embeddings.shape), text_embeddings])
+        else:
+            context = torch.cat([uncond_embeddings_, text_embeddings])
+        latents = ptp_utils.diffusion_step(model, controller, latents, context, t, guidance_scale, low_resource=False)
 
-    test_dataset = VGGSound(
-        args=args,
-        tokenizer=tokenizer,
-        logger=logger,
-        size=args.resolution,
-    )
-
-    test_dataloader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=1, shuffle=True, num_workers=args.dataloader_num_workers
-    )
-
-    # Prepare everything with our `accelerator`.
-    model, test_dataloader = accelerator.prepare(
-        model, test_dataloader
-    )
-
-    return tokenizer, accelerator, model, save_dir, weight_dtype, test_dataloader
+    if return_type == 'image':
+        image = ptp_utils.latent2image(model.vae, latents)
+    else:
+        image = latents
+    return image, latent
 
 
-def inference_loop(args, tokenizer, accelerator, model, save_dir, weight_dtype, test_dataloader):
+def run_and_display(ldm, prompts, controller, latent=None, run_baseline=False, generator=None, uncond_embeddings=None,
+                    verbose=True):
+    if run_baseline:
+        print("w.o. prompt-to-prompt")
+        images, latent = run_and_display(prompts, EmptyControl(), latent=latent, run_baseline=False,
+                                         generator=generator)
+        print("with prompt-to-prompt")
+    images, x_t = text2image_ldm_stable(ldm, prompts, controller, latent=latent, num_inference_steps=NUM_DDIM_STEPS,
+                                        guidance_scale=GUIDANCE_SCALE, generator=generator,
+                                        uncond_embeddings=uncond_embeddings)
+    if verbose:
+        ptp_utils.view_images(images)
+    return images, x_t
+
+
+def edit_img_loop(args, tokenizer, accelerator, model, weight_dtype, test_dataloader):
     placeholder_token_id = tokenizer.convert_tokens_to_ids(args.placeholder_token)
     # Resize the token embeddings as we are adding new special tokens to the tokenizer
     accelerator.unwrap_model(model).text_encoder.resize_token_embeddings(len(tokenizer))
 
-    prompt = args.prompt
+    edit_prompt = args.edit_prompt
+    image_label = args.image_prompt
+
+    ldm_model = StableDiffusionPipeline.from_pretrained(
+        args.pretrained_model_name_or_path,
+        tokenizer=tokenizer,
+        text_encoder=accelerator.unwrap_model(model).text_encoder,
+        vae=accelerator.unwrap_model(model).vae,
+        unet=accelerator.unwrap_model(model).unet,
+    ).to(accelerator.device)
+    null_inversion = NullInversion(ldm_model)
+    (image_gt, image_enc), x_t, uncond_embeddings = null_inversion.invert(args.image_path, image_label,
+                                                                          offsets=(0, 0, 200, 0), verbose=True)
+
+    prompts = [image_label]
+    controller = AttentionStore()
+    _, x_t = run_and_display(ldm_model, prompts, controller, run_baseline=False, latent=x_t,
+                             uncond_embeddings=uncond_embeddings, verbose=False)
 
     for step, batch in enumerate(test_dataloader):
         if step >= args.generation_steps:
@@ -200,18 +182,17 @@ def inference_loop(args, tokenizer, accelerator, model, save_dir, weight_dtype, 
         token_embeds = model.text_encoder.get_input_embeddings().weight.data
         token_embeds[placeholder_token_id] = audio_token.clone()
 
-        ldm_model = StableDiffusionPipeline.from_pretrained(
-            args.pretrained_model_name_or_path,
-            tokenizer=tokenizer,
-            text_encoder=accelerator.unwrap_model(model).text_encoder,
-            vae=accelerator.unwrap_model(model).vae,
-            unet=accelerator.unwrap_model(model).unet,
-        ).to(accelerator.device)
-        image = ldm_model(prompt, num_inference_steps=args.num_inference_steps, guidance_scale=7.5).images[0]
-        image.save(os.path.join(save_dir, f'{batch["full_name"][0]}.png'))
+        cross_replace_steps = {'default_': .8, }
+        self_replace_steps = .5
+        blend_word = (('cat',), (args.placeholder_token,))
+        eq_params = {"words": (args.placeholder_token,), "values": (2,)}  # amplify attention to the word learned audio token by 2
+
+        controller = make_controller(prompts, True, cross_replace_steps, self_replace_steps, blend_word, eq_params)
+        images, _ = run_and_display(ldm_model, prompts, controller, run_baseline=False, latent=x_t,
+                                    uncond_embeddings=uncond_embeddings)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     args = parse_args()
-    tokenizer, accelerator, model, save_dir, weight_dtype, test_data = inference(args)
-    inference_loop(args, tokenizer, accelerator, model, save_dir, weight_dtype, test_data)
+    tokenizer, accelerator, model, _, weight_dtype, test_data = inference(args)
+    edit_img_loop(args, tokenizer, accelerator, model, weight_dtype, test_data)
