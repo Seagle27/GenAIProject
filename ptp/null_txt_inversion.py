@@ -4,11 +4,11 @@ import torch
 from diffusers import DDIMScheduler
 import torch.nn.functional as nnf
 import numpy as np
-import ptp_utils
+from ptp import ptp_utils
 from torch.optim.adam import Adam
 from PIL import Image
 
-from ptp_consts import *
+from ptp.ptp_consts import *
 
 
 def load_512(image_path, left=0, right=0, top=0, bottom=0):

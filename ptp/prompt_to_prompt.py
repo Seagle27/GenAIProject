@@ -3,11 +3,11 @@ import torch
 import torch.nn.functional as nnf
 import numpy as np
 import abc
-import ptp_utils
-import seq_aligner
+from ptp import ptp_utils
+from ptp import seq_aligner
 from PIL import Image
 
-from ptp_consts import *
+from ptp.ptp_consts import *
 
 
 class LocalBlend:

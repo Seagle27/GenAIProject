@@ -1,7 +1,7 @@
 import os
 import argparse
 import torch.utils.checkpoint
-from diffusers import StableDiffusionPipeline
+from diffusers import StableDiffusionPipeline, DDIMScheduler
 
 from inference import inference
 from ptp.prompt_to_prompt import *
@@ -155,12 +155,16 @@ def edit_img_loop(args, tokenizer, accelerator, model, weight_dtype, test_datalo
     edit_prompt = args.edit_prompt
     image_label = args.image_prompt
 
+    scheduler = DDIMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False,
+                              set_alpha_to_one=False)
+
     ldm_model = StableDiffusionPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
         tokenizer=tokenizer,
         text_encoder=accelerator.unwrap_model(model).text_encoder,
         vae=accelerator.unwrap_model(model).vae,
         unet=accelerator.unwrap_model(model).unet,
+        scheduler=scheduler
     ).to(accelerator.device)
     null_inversion = NullInversion(ldm_model)
     (image_gt, image_enc), x_t, uncond_embeddings = null_inversion.invert(args.image_path, image_label,
@@ -181,6 +185,15 @@ def edit_img_loop(args, tokenizer, accelerator, model, weight_dtype, test_datalo
 
         token_embeds = model.text_encoder.get_input_embeddings().weight.data
         token_embeds[placeholder_token_id] = audio_token.clone()
+
+        ldm_model = StableDiffusionPipeline.from_pretrained(
+            args.pretrained_model_name_or_path,
+            tokenizer=tokenizer,
+            text_encoder=accelerator.unwrap_model(model).text_encoder,
+            vae=accelerator.unwrap_model(model).vae,
+            unet=accelerator.unwrap_model(model).unet,
+            scheduler=scheduler
+        ).to(accelerator.device)
 
         cross_replace_steps = {'default_': .8, }
         self_replace_steps = .5
