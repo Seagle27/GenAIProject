@@ -41,6 +41,8 @@ def parse_args():
                         help="Revision of pretrained model identifier from huggingface.co/models.")
     parser.add_argument("--tokenizer_name", type=str, default=None,
                         help="Pretrained tokenizer name or path if not the same as model_name")
+    parser.add_argument("--csv_path", type=str, default=None,
+                        help="Path to the VGGSound csv file.")
     parser.add_argument("--data_dir", type=str,
                         help="A folder containing the training data.")
     parser.add_argument("--placeholder_token", type=str, default="<*>",
@@ -147,7 +149,7 @@ def inference(args):
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
 
-    model = AudioTokenWrapper(args, accelerator).to(weight_dtype).eval()
+    at_model = AudioTokenWrapper(args, accelerator).to(weight_dtype).eval()
 
     # Add the placeholder token in tokenizer
     num_added_tokens = tokenizer.add_tokens(args.placeholder_token)
@@ -174,13 +176,13 @@ def inference(args):
     )
 
     # Prepare everything with our `accelerator`.
-    model, test_dataloader = accelerator.prepare(
-        model, test_dataloader
+    at_model, test_dataloader = accelerator.prepare(
+        at_model, test_dataloader
     )
 
     placeholder_token_id = tokenizer.convert_tokens_to_ids(args.placeholder_token)
     # Resize the token embeddings as we are adding new special tokens to the tokenizer
-    accelerator.unwrap_model(model).text_encoder.resize_token_embeddings(len(tokenizer))
+    accelerator.unwrap_model(at_model).text_encoder.resize_token_embeddings(len(tokenizer))
 
     prompt = args.prompt
 
@@ -189,18 +191,18 @@ def inference(args):
             break
         # Audio's feature extraction
         audio_values = batch["audio_values"].to(accelerator.device).to(dtype=weight_dtype)
-        aud_features = accelerator.unwrap_model(model).aud_encoder.extract_features(audio_values)[1]
-        audio_token = accelerator.unwrap_model(model).embedder(aud_features)
+        aud_features = accelerator.unwrap_model(at_model).aud_encoder.extract_features(audio_values)[1]
+        audio_token = accelerator.unwrap_model(at_model).embedder(aud_features)
 
-        token_embeds = model.text_encoder.get_input_embeddings().weight.data
+        token_embeds = at_model.text_encoder.get_input_embeddings().weight.data
         token_embeds[placeholder_token_id] = audio_token.clone()
 
         pipeline = StableDiffusionPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
             tokenizer=tokenizer,
-            text_encoder=accelerator.unwrap_model(model).text_encoder,
-            vae=accelerator.unwrap_model(model).vae,
-            unet=accelerator.unwrap_model(model).unet,
+            text_encoder=accelerator.unwrap_model(at_model).text_encoder,
+            vae=accelerator.unwrap_model(at_model).vae,
+            unet=accelerator.unwrap_model(at_model).unet,
         ).to(accelerator.device)
         image = pipeline(prompt, num_inference_steps=args.num_inference_steps, guidance_scale=7.5).images[0]
         image.save(os.path.join(save_dir, f'{batch["full_name"][0]}.png'))

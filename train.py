@@ -68,6 +68,8 @@ def parse_args():
                         help="Revision of pretrained model identifier from huggingface.co/models.")
     parser.add_argument("--tokenizer_name", type=str, default=None,
                         help="Pretrained tokenizer name or path if not the same as model_name")
+    parser.add_argument("--csv_path", type=str, default=None,
+                        help="Path to the VGGSound csv file.")
     parser.add_argument("--data_dir", type=str,
                         help="A folder containing the training data.")
     parser.add_argument("--placeholder_token", type=str, default="<*>",

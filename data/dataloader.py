@@ -9,8 +9,6 @@ from PIL import Image
 import os
 import torch
 import pandas as pd
-import pickle
-import json
 
 
 if version.parse(version.parse(PIL.__version__).base_version) >= version.parse("9.1.0"):
@@ -44,68 +42,36 @@ class VGGSound(Dataset):
             size=512,
             interpolation='bicubic',
     ):
-        video_lst = "video"
-        audio_lst = "audio"
 
-        self.video = os.path.join(args.data_dir, video_lst)
-        self.audio = os.path.join(args.data_dir, audio_lst)
-        self.vggsound = "data/VGGSound/vggsound.csv"
-        self.video_path = list()
-        self.audio_path = list()
+        self.base_dir = args.data_dir
+        self.vggsound = args.csv_path
+        self.audio_path, self.image_path, self.label = list(), list(), list()
         self.tokenizer = tokenizer
         self.size = size
         self.placeholder_token = args.placeholder_token
-        self.data_set = args.data_set
-        self.df = pd.read_csv(self.vggsound)
         self.input_length = args.input_length
-
+        self.df = pd.read_csv(self.vggsound)
+        self.data_set = args.data_set
         if self.data_set == 'train':
-            self.eval_mode = False
             self.center_crop = args.center_crop
             self.filter_frames = args.filter_frames
-            self.filter_unmatch_videos = args.filter_unmatch_videos
-            self.filter_low_quality_imgs = args.filter_low_quality_imgs
-
         else:
-            self.eval_mode = args.eval_mode
             self.center_crop = False
+            self.filter_frames = False
 
-            if self.eval_mode:
-                self.eval_output_dir = os.path.join(args.output_dir, 'selected_input_frames')
-                if not os.path.exists(self.eval_output_dir):
-                    os.makedirs(self.eval_output_dir)
-                self.filter_frames = True
-                self.filter_unmatch_videos = True
-                self.filter_low_quality_imgs = True
-            else:
-                self.filter_frames = False
-                self.filter_unmatch_videos = False
-                self.filter_low_quality_imgs = False
+        self.unique_labels = self.df['label'].unique().tolist()
+        audios, images = set(), set()
+        for label_name in self.unique_labels:
+            label_audio_dir = os.path.join(args.data_dir, label_name, 'audio')
+            label_image_dir = os.path.join(args.data_dir, label_name, 'image')
+            audios = audios | set([file_path[:-4] for file_path in os.listdir(label_audio_dir)])
+            images = images | set([file_path[:-4] for file_path in os.listdir(label_image_dir)])
 
-        with open('constants/best_frames.json', 'r') as file:
-            self.frames = json.load(file)
-
-        videos = set([file_path[:-4] for file_path in os.listdir(self.video)])
-        audios = set([file_path[:-4] for file_path in os.listdir(self.audio)])
-        samples = videos & audios
-
-        if self.data_set == 'train' and self.filter_unmatch_videos:
-            with open("constants/unmatch_videos.pkl", "rb") as file:
-                filtered_out = pickle.load(file)
-                self.df = self.df[~self.df['ytid'].isin(filtered_out)]
-
-        if self.data_set == 'train' and self.filter_low_quality_imgs:
-            with open("constants/low_quality_videos.pkl", "rb") as file:
-                filtered_out = pickle.load(file)
-                self.df = self.df[~self.df['ytid'].isin(filtered_out)]
-
-        self.label = list()
+        samples = audios & images
         self.prepare_dataset(samples)
 
-        self.num_samples = len(self.video_path)
-
+        self.num_samples = len(self.audio_path)
         self._length = self.num_samples
-
         logger.info(f"{args.data_set}, num samples: {self.num_samples}")
 
         self.interpolation = {
@@ -115,74 +81,29 @@ class VGGSound(Dataset):
             "lanczos": PIL_INTERPOLATION["lanczos"],
         }[interpolation]
         self.templates = imagenet_templates_small
-        # self.flip_transform = transforms.RandomHorizontalFlip(p=self.flip_p)
 
     def __len__(self):
         return self._length
 
     def prepare_dataset(self, samples):
-        df = self.df[self.df["set"] == self.data_set]
-        for vid in list(samples):
-            video = vid[:11]
-            df_vid = df[df.ytid == video]
-            if df_vid.empty:
-                continue
-            label = df_vid["class"].unique()[0]
-            self.video_path.append(os.path.join(self.video, vid + ".mp4"))
-            self.audio_path.append(os.path.join(self.audio, vid + ".wav"))
-            self.label.append(label)
+        label_to_idx = {label: i for i, label in enumerate(self.unique_labels)}
+        df = self.df[self.df["train/test split"] == self.data_set]
+        for _, row in df.iterrows():
+            file_name = f"{row['YouTube ID']}_{row['start seconds']:06d}"
+            if file_name in samples:
+                self.audio_path.append(os.path.join(self.base_dir, row["label"], 'audio', file_name + ".wav"))
+                self.image_path.append(os.path.join(self.base_dir, row["label"], 'image', file_name + ".jpg"))
+                self.label.append(label_to_idx[row["label"]])
 
-    def sample_frame(self, video_path, rand_sec):
-        # Open the speech_video file
-        video = cv2.VideoCapture(video_path)
-        # Get the total number of frames in the speech_video
-        total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
-
-        low, high = (total_frames // 10) * rand_sec, (total_frames // 10) * (rand_sec+self.input_length)
-        ytid = video_path.split('/')[-1][:-4]
-        candidates = []
-
-        if self.filter_frames:
-            if ytid in self.frames:
-                # TODO: fix the bug here
-                try:
-                    candidates = self.frames[ytid][0]
-                    candidates = [frame for frame in candidates if low <= frame <= high]
-                except:
-                    candidates = []
-        frame_num = random.choice(candidates) if candidates else random.randint(low, high)
-
-        # Set the speech_video to the chosen frame
-        video.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
-        # Read the frame
-        _, frame = video.read()
-        # Release the speech_video file
-        video.release()
-        # Return the frame
-        if self.eval_mode:
-            output_path = os.path.join(self.eval_output_dir, f'selected_frame_{ytid}.png')
-            cv2.imwrite(output_path, frame)
-        return frame
-
-    def img_proc(self, vid, rand_sec):
-        image = self.sample_frame(vid, rand_sec)
+    def img_proc(self, img_path):
+        image = cv2.imread(img_path)
         img = np.array(image).astype(np.uint8)
-
         if self.center_crop:
             crop = min(img.shape[0], img.shape[1])
-            (
-                h,
-                w,
-            ) = (
-                img.shape[0],
-                img.shape[1],
-            )
+            (h,w,) = (img.shape[0],img.shape[1],)
             img = img[(h - crop) // 2: (h + crop) // 2, (w - crop) // 2: (w + crop) // 2]
-
         image = Image.fromarray(img)
         image = image.resize((512, 320), resample=self.interpolation)
-
-        # image = self.flip_transform(image)
         image = np.array(image).astype(np.uint8)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = (image / 127.5 - 1.0).astype(np.float32)
@@ -208,19 +129,12 @@ class VGGSound(Dataset):
         ).input_ids[0]
 
     def __getitem__(self, i):
+        rand_sec = 0 if self.input_length == 10 else np.random.randint(0, 10 - self.input_length)
         example = {}
-        example["input_ids"] = self.txt_proc()
-        ytid = self.audio_path[i % self.num_samples].split('/')[-1][:11]
-        example["ytid"] = ytid
-        example['label'] = self.label[i % self.num_samples]
-        example['full_name'] = self.audio_path[i % self.num_samples].split('/')[-1][:-4]
         aud = self.audio_path[i % self.num_samples]
-        if self.input_length == 10:
-            rand_sec = 0
-        else:
-            rand_sec = np.random.randint(0, 10 - self.input_length)
-
-        vid = self.video_path[i % self.num_samples]
-        example["pixel_values"] = self.img_proc(vid, rand_sec)
+        img = self.image_path[i % self.num_samples]
+        example["input_ids"] = self.txt_proc()
+        example['label'] = self.label[i % self.num_samples]
         example["audio_values"] = self.aud_proc_beats(aud, rand_sec)
+        example["pixel_values"] = self.img_proc(img) if self.data_set == "train" else None
         return example
