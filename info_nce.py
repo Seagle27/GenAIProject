@@ -15,14 +15,16 @@ class InfoNCELoss(nn.Module):
         audio_features = F.normalize(audio_features, dim=-1)
         label_features = F.normalize(label_features, dim=-1)
 
-        # Ensure class_labels is a tensor on the same device as the features.
-        if not torch.is_tensor(class_labels):
-            class_labels = torch.tensor(class_labels, device=audio_features.device)
-        else:
-            class_labels = class_labels.to(audio_features.device)
-
         # Create a mask for same-class positives
-        positive_mask = (class_labels.unsqueeze(0) == class_labels.unsqueeze(1)).float()
+        batch_size = len(class_labels)
+        mask = torch.zeros((batch_size, batch_size), dtype=torch.float32, device=audio_features.device)
+
+        for i in range(batch_size):
+            for j in range(batch_size):
+                # Check if sample i and sample j have identical class labels
+                if class_labels[i] == class_labels[j]:
+                    mask[i, j] = 1.0
+        positive_mask = mask
 
         # temperature = self.log_logit_scale.exp()
         temperature = 0.07
