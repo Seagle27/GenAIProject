@@ -40,7 +40,7 @@ from tqdm.auto import tqdm
 from transformers import CLIPTokenizer
 from modules.AudioToken.AudioToken import AudioTokenWrapper
 from data.dataloader import VGGSound
-from info_nce import InfoNCE
+from info_nce import InfoNCELoss
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.12.0")
@@ -286,6 +286,7 @@ def train():
         num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
+    info_nce_loss_fn = InfoNCELoss().to(accelerator.device)
 
     # Prepare everything with our `accelerator`.
     model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
@@ -392,7 +393,7 @@ def train():
                     input_ids = tokenizer(batch['label']).data['input_ids']
                     input_ids = [ids[1:-1] for ids in input_ids]
                     label_embedding = torch.cat([txt_embeddings[ids].mean(dim=0).view(1, -1) for ids in input_ids])
-                    loss += args.lambda_d * InfoNCE(audio_token, label_embedding, input_ids)
+                    loss += args.lambda_d * info_nce_loss_fn(audio_token, label_embedding, input_ids)
 
                 accelerator.backward(loss)
                 optimizer.step()
