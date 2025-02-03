@@ -67,7 +67,7 @@ class VGGSound(Dataset):
             audios = audios | set([file_path[:-4] for file_path in os.listdir(label_audio_dir)])
             images = images | set([file_path[:-4] for file_path in os.listdir(label_image_dir)])
 
-        samples = audios & images if self.data_set=='train'
+        samples = audios & images if self.data_set == 'train' else audios
         self.prepare_dataset(samples)
 
         self.num_samples = len(self.audio_path)
