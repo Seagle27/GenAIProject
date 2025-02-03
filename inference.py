@@ -12,6 +12,7 @@ from accelerate.logging import get_logger
 from accelerate.utils import set_seed
 from diffusers import StableDiffusionPipeline
 from diffusers.utils import check_min_version
+from scipy.io.wavfile import write
 
 # TODO: remove and import from diffusers.utils when the new version of diffusers is released
 from transformers import CLIPTokenizer
@@ -23,6 +24,7 @@ from modules.AudioToken.AudioToken import AudioTokenWrapper
 check_min_version("0.12.0")
 
 logger = get_logger(__name__)
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
@@ -46,7 +48,7 @@ def parse_args():
     parser.add_argument("--data_dir", type=str,
                         help="A folder containing the training data.")
     parser.add_argument("--placeholder_token", type=str, default="<*>",
-                        help="A token to use as a placeholder for the audio.",)
+                        help="A token to use as a placeholder for the audio.", )
     parser.add_argument("--output_dir", type=str, default="output",
                         help="The output directory where the model predictions and checkpoints will be written.")
     parser.add_argument("--seed", type=int, default=None,
@@ -97,19 +99,18 @@ def parse_args():
 
 
 def inference(args):
-
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    save_dir = os.path.join(args.output_dir, 'imgs')
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+    imgs_save_path = os.path.join(args.output_dir, 'image')
+    if not os.path.exists(imgs_save_path):
+        os.makedirs(imgs_save_path)
 
-    save_dir = os.path.join(save_dir, args.run_name)
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+    audio_save_path = os.path.join(args.output_dir, 'audio')
+    if not os.path.exists(audio_save_path):
+        os.makedirs(audio_save_path)
 
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
@@ -205,7 +206,17 @@ def inference(args):
             unet=accelerator.unwrap_model(at_model).unet,
         ).to(accelerator.device)
         image = pipeline(prompt, num_inference_steps=args.num_inference_steps, guidance_scale=7.5).images[0]
-        image.save(os.path.join(save_dir, f'{batch["full_name"][0]}.png'))
+        image.save(os.path.join(imgs_save_path, f'{batch["full_name"][0]}_{batch["label"][0]}.png'))
+
+        # Extract audio values as a NumPy array
+        audio_numpy = audio_values[0].cpu().numpy()  # Assuming batch dimension is 1
+
+        # Define the sample rate (modify as needed)
+        sample_rate = 16000  # Typical sample rate for audio processing
+
+        # Save the .wav file
+        audio_filename = os.path.join(audio_save_path, f'{batch["full_name"][0]}_{batch["label"][0]}.wav')
+        write(audio_filename, sample_rate, audio_numpy)
 
 
 if __name__ == "__main__":

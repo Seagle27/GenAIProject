@@ -67,7 +67,7 @@ class VGGSound(Dataset):
             audios = audios | set([file_path[:-4] for file_path in os.listdir(label_audio_dir)])
             images = images | set([file_path[:-4] for file_path in os.listdir(label_image_dir)])
 
-        samples = audios & images
+        samples = audios & images if self.data_set=='train'
         self.prepare_dataset(samples)
 
         self.num_samples = len(self.audio_path)
@@ -135,5 +135,6 @@ class VGGSound(Dataset):
         example["input_ids"] = self.txt_proc()
         example['label'] = self.label[i % self.num_samples]
         example["audio_values"] = self.aud_proc_beats(aud, rand_sec)
-        example["pixel_values"] = self.img_proc(img) if self.data_set == "train" else None
+        example["pixel_values"] = self.img_proc(img) if self.data_set == "train" else 0
+        example["full_name"] = aud.split('/')[-1][:-4]
         return example
