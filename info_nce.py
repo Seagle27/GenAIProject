@@ -8,7 +8,7 @@ class InfoNCELoss(nn.Module):
     def __init__(self, init_logit_scale=1.0):
         super(InfoNCELoss, self).__init__()
 
-        # self.log_logit_scale = nn.Parameter(torch.tensor(np.log(init_logit_scale), dtype=torch.float32))
+        self.log_logit_scale = nn.Parameter(torch.tensor(np.log(init_logit_scale), dtype=torch.float32))
 
     def forward(self, audio_features, label_features, class_labels):
         # Normalize the embeddings.
@@ -31,7 +31,7 @@ class InfoNCELoss(nn.Module):
 
         # Compute the cosine similarity between label and audio features.
         # Since the features are normalized, the dot product is equivalent to cosine similarity.
-        logits_per_label = torch.matmul(label_features, audio_features.t()) * temperature
+        logits_per_label = torch.matmul(label_features, audio_features.t()) / temperature
         logits_per_audio = logits_per_label.t()  # symmetric for the two modalities
 
         # Compute exponential scores.
