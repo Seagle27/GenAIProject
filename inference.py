@@ -190,9 +190,14 @@ def inference(args):
     for step, batch in enumerate(test_dataloader):
         if step >= args.generation_steps:
             break
+        save_path = os.path.join(imgs_save_path, f'{batch["full_name"][0]}_{batch["label"][0]}.png')
+        if os.path.isfile(save_path):
+            print(f"Skipping {save_path}")
+            continue
         # Audio's feature extraction
-        audio_values = batch["audio_values"].to(accelerator.device).to(dtype=weight_dtype)
-        aud_features = accelerator.unwrap_model(at_model).aud_encoder.extract_features(audio_values)[1]
+        with torch.cuda.amp.autocast(dtype=torch.float32):
+            audio_values = batch["audio_values"].to(accelerator.device).to(dtype=weight_dtype)
+            aud_features = accelerator.unwrap_model(at_model).aud_encoder.extract_features(audio_values)[1].to(dtype=weight_dtype)
         audio_token = accelerator.unwrap_model(at_model).embedder(aud_features)
 
         token_embeds = at_model.text_encoder.get_input_embeddings().weight.data
@@ -206,7 +211,7 @@ def inference(args):
             unet=accelerator.unwrap_model(at_model).unet,
         ).to(accelerator.device)
         image = pipeline(prompt, num_inference_steps=args.num_inference_steps, guidance_scale=7.5).images[0]
-        image.save(os.path.join(imgs_save_path, f'{batch["full_name"][0]}_{batch["label"][0]}.png'))
+        image.save(save_path)
 
         # Extract audio values as a NumPy array
         audio_numpy = audio_values[0].cpu().numpy()  # Assuming batch dimension is 1

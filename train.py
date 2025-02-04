@@ -344,9 +344,9 @@ def train():
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
-
-                audio_values = batch["audio_values"].to(accelerator.device).to(dtype=weight_dtype)
-                aud_features = accelerator.unwrap_model(model).aud_encoder.extract_features(audio_values)[1]
+                with torch.cuda.amp.autocast(dtype=torch.float32):
+                    audio_values = batch["audio_values"].to(accelerator.device).to(dtype=weight_dtype)
+                    aud_features = accelerator.unwrap_model(model).aud_encoder.extract_features(audio_values)[1].to(dtype=weight_dtype)
                 audio_token = accelerator.unwrap_model(model).embedder(aud_features)
 
                 # Get the text embedding for conditioning
