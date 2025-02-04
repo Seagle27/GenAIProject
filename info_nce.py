@@ -47,8 +47,8 @@ class InfoNCELoss(nn.Module):
         denominator_audio = exp_logits_audio.sum(dim=1, keepdim=True)
 
         # Compute the probabilities for positive pairs in each direction.
-        prob_label = positive_logits_label.sum(dim=1) / (denominator_label.squeeze() + 1e-8)
-        prob_audio = positive_logits_audio.sum(dim=1) / (denominator_audio.squeeze() + 1e-8)
+        prob_label = positive_logits_label.mean(dim=1) / (denominator_label.squeeze() + 1e-8)
+        prob_audio = positive_logits_audio.mean(dim=1) / (denominator_audio.squeeze() + 1e-8)
 
         # Compute the negative log-likelihood loss for each direction.
         loss_label = -torch.log(prob_label + 1e-8)
