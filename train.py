@@ -153,6 +153,8 @@ def parse_args():
                         help="Whether train Lora layers or not")
     parser.add_argument("--infoNCE_loss", type=bool, default=True,
                         help="Use infoNCE loss")
+    parser.add_argument("--debug", type=bool, default=False,
+                        help="debug flag")
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -393,7 +395,8 @@ def train():
                     input_ids = tokenizer(batch['label']).data['input_ids']
                     input_ids = [ids[1:-1] for ids in input_ids]
                     label_embedding = torch.cat([txt_embeddings[ids].mean(dim=0).view(1, -1) for ids in input_ids])
-                    loss += args.lambda_d * info_nce_loss_fn(audio_token, label_embedding, input_ids)
+                    nce_loss = args.lambda_d * info_nce_loss_fn(audio_token, label_embedding, input_ids)
+                    loss += nce_loss
 
                 accelerator.backward(loss)
                 optimizer.step()
@@ -406,6 +409,8 @@ def train():
                 global_step += 1
                 running_loss += loss.detach().item()
                 if global_step % args.save_steps == 0:
+                    if args.debug and args.infoNCE_loss:
+                        print(f"infoNCE loss: {nce_loss.detach().item()}")
                     accelerator.wait_for_everyone()
                     if accelerator.is_main_process:
                         save_path = os.path.join(args.output_dir, f"weights/{args.run_name}_learned_embeds-{global_step}.bin")
