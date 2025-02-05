@@ -367,7 +367,7 @@ def train():
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
-                mse_loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
                 if len(audio_token.shape) > 2:
                     norm_dim = 2
@@ -377,6 +377,7 @@ def train():
                 # add regularization
                 reg_loss = args.lambda_a * torch.mean(torch.abs(audio_token)) + \
                         args.lambda_b * (torch.norm(audio_token, p=2, dim=norm_dim)**2).mean()
+                loss += reg_loss
 
                 if args.cosine_loss:
                     if args.debug and flag_debug_print[0]:
@@ -391,9 +392,7 @@ def train():
                     embedds = audio_token
                     cosine_sim = F.cosine_similarity(embedds, target, dim=1).mean()
                     cosine_penalty = (1 - cosine_sim) ** 2
-                    # loss += args.lambda_c * cosine_penalty
-                else:
-                    cosine_penalty = 0
+                    loss += args.lambda_c * cosine_penalty
 
                 if args.infoNCE_loss:
                     input_ids = tokenizer(batch['label']).data['input_ids']
@@ -405,15 +404,10 @@ def train():
                               f"input ids dim: {len(input_ids)}", )
                         flag_debug_print[1] = False
                     nce_loss = info_nce_loss_fn(audio_token, label_embedding, input_ids)
-                else:
-                    nce_loss = 0
-                    # loss += args.lambda_d * nce_loss
+                    loss += args.lambda_d * nce_loss
 
                 if args.infoNCE_loss and global_step < args.lr_warmup_steps * 2:
                     loss = args.lambda_d * nce_loss
-                else:
-                    loss = mse_loss + reg_loss + args.lambda_c * cosine_penalty + args.lambda_d * nce_loss
-
 
                 accelerator.backward(loss)
                 optimizer.step()
