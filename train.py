@@ -402,7 +402,7 @@ def train():
                     if args.debug and flag_debug_print[1]:
                         print("***Using infoNCE***")
                         print(f"audio token dim: {audio_token.shape}\nlabel_embedding dim: {label_embedding.shape}\n"
-                              f"input ids dim: {input_ids.shape}", )
+                              f"input ids dim: {len(input_ids)}", )
                         flag_debug_print[1] = False
                     nce_loss = info_nce_loss_fn(audio_token, label_embedding, input_ids)
                 else:
