@@ -405,7 +405,9 @@ def train():
                         print(f"audio token dim: {audio_token.shape}\nlabel_embedding dim: {label_embedding.shape}\n"
                               f"input ids dim: {len(input_ids)}", )
                         flag_debug_print[1] = False
-                    nce_loss = info_nce_loss_fn(audio_token, label_embedding, batch['num_label'])
+                    nce_loss1 = info_nce_loss_fn(audio_token, label_embedding, batch['num_label'])
+                    nce_loss2 = info_nce_loss_fn(label_embedding, audio_token, batch['num_label'])
+                    nce_loss = (nce_loss1 + nce_loss2).mean()
                     loss += args.lambda_d * nce_loss
 
                 accelerator.backward(loss)
