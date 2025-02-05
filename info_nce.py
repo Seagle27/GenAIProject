@@ -8,7 +8,7 @@ class InfoNCELoss(nn.Module):
     def __init__(self, init_logit_scale=1.0):
         super(InfoNCELoss, self).__init__()
 
-        self.log_logit_scale = nn.Parameter(torch.tensor(np.log(init_logit_scale), dtype=torch.float32))
+        # self.log_logit_scale = nn.Parameter(torch.tensor(np.log(init_logit_scale), dtype=torch.float32))
 
     def forward(self, audio_features, label_features, class_labels):
         # Normalize the embeddings.
@@ -51,8 +51,8 @@ class InfoNCELoss(nn.Module):
         prob_audio = positive_logits_audio.mean(dim=1) / (denominator_audio.squeeze() + 1e-8)
 
         # Compute the negative log-likelihood loss for each direction.
-        loss_label = -torch.log(prob_label + 1e-8)
-        loss_audio = -torch.log(prob_audio + 1e-8)
+        loss_label = -torch.log(prob_label)
+        loss_audio = -torch.log(prob_audio)
 
         # Return the average of both losses.
         total_loss = (loss_label + loss_audio).mean()

@@ -352,32 +352,35 @@ def train():
                     aud_features = accelerator.unwrap_model(model).aud_encoder.extract_features(audio_values)[1].to(dtype=weight_dtype)
                 audio_token = accelerator.unwrap_model(model).embedder(aud_features)
 
-                # Get the text embedding for conditioning
-                encoder_hidden_states = accelerator.unwrap_model(model).text_encoder(
-                    audio_token, input_ids=batch['input_ids'])[0].to(dtype=weight_dtype)
+                if global_step > args.lr_warmup_steps * 2:
+                    # Get the text embedding for conditioning
+                    encoder_hidden_states = accelerator.unwrap_model(model).text_encoder(
+                        audio_token, input_ids=batch['input_ids'])[0].to(dtype=weight_dtype)
 
-                # Predict the noise residual
-                model_pred = accelerator.unwrap_model(model).unet(noisy_latents, timesteps, encoder_hidden_states).sample
+                    # Predict the noise residual
+                    model_pred = accelerator.unwrap_model(model).unet(noisy_latents, timesteps, encoder_hidden_states).sample
 
-                # Get the target for loss depending on the prediction type
-                if noise_scheduler.config.prediction_type == "epsilon":
-                    target = noise
-                elif noise_scheduler.config.prediction_type == "v_prediction":
-                    target = noise_scheduler.get_velocity(latents, noise, timesteps)
+                    # Get the target for loss depending on the prediction type
+                    if noise_scheduler.config.prediction_type == "epsilon":
+                        target = noise
+                    elif noise_scheduler.config.prediction_type == "v_prediction":
+                        target = noise_scheduler.get_velocity(latents, noise, timesteps)
+                    else:
+                        raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
+
+                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+
+                    if len(audio_token.shape) > 2:
+                        norm_dim = 2
+                    else:
+                        norm_dim = 1
+
+                    # add regularization
+                    reg_loss = args.lambda_a * torch.mean(torch.abs(audio_token)) + \
+                               args.lambda_b * (torch.norm(audio_token, p=2, dim=norm_dim) ** 2).mean()
+                    loss += reg_loss
                 else:
-                    raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
-
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
-
-                if len(audio_token.shape) > 2:
-                    norm_dim = 2
-                else:
-                    norm_dim = 1
-
-                # add regularization
-                reg_loss = args.lambda_a * torch.mean(torch.abs(audio_token)) + \
-                        args.lambda_b * (torch.norm(audio_token, p=2, dim=norm_dim)**2).mean()
-                loss += reg_loss
+                    loss = 0
 
                 if args.cosine_loss:
                     if args.debug and flag_debug_print[0]:
@@ -405,9 +408,6 @@ def train():
                         flag_debug_print[1] = False
                     nce_loss = info_nce_loss_fn(audio_token, label_embedding, input_ids)
                     loss += args.lambda_d * nce_loss
-
-                if args.infoNCE_loss and global_step < args.lr_warmup_steps * 2:
-                    loss = args.lambda_d * nce_loss
 
                 accelerator.backward(loss)
                 optimizer.step()
