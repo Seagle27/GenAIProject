@@ -138,7 +138,7 @@ def parse_args():
                         help="Regularization lambda - infoNCE loss")
     parser.add_argument("--run_name", type=str, default='AudioToken',
                         help="Insert run name")
-    parser.add_argument("--cosine_loss", type=bool, default=False,
+    parser.add_argument("--cosine_loss", default=False, action="store_true",
                         help="Use classification loss")
     parser.add_argument("--filter_frames", type=bool, default=True,
                         help="Choose whether or not to use previously detected frames as informative frames.",)
@@ -151,9 +151,9 @@ def parse_args():
                         help="Select the number of seconds of audio you want in each training-sample.")
     parser.add_argument("--lora", type=bool, default=False,
                         help="Whether train Lora layers or not")
-    parser.add_argument("--infoNCE_loss", type=bool, default=True,
+    parser.add_argument("--infoNCE_loss", default=False, action="store_true",
                         help="Use infoNCE loss")
-    parser.add_argument("--debug", type=bool, default=False,
+    parser.add_argument("--debug", default=False, action="store_true",
                         help="debug flag")
 
     args = parser.parse_args()

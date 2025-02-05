@@ -27,7 +27,7 @@ class InfoNCELoss(nn.Module):
         positive_mask = mask
 
         # temperature = self.log_logit_scale.exp()
-        temperature = 0.07
+        temperature = 0.3
 
         # Compute the cosine similarity between label and audio features.
         # Since the features are normalized, the dot product is equivalent to cosine similarity.
