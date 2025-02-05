@@ -84,8 +84,6 @@ def parse_args():
                         help="Select the number of seconds of audio you want in each test-sample.")
     parser.add_argument("--lora", type=bool, default=False,
                         help="Whether load Lora layers or not")
-    parser.add_argument("--eval_mode", type=bool, default=False,
-                        help="Whether save ground truth frame or not")
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
