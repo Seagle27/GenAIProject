@@ -45,7 +45,7 @@ class VGGSound(Dataset):
 
         self.base_dir = args.data_dir
         self.vggsound = args.csv_path
-        self.audio_path, self.image_path, self.label = list(), list(), list()
+        self.audio_path, self.image_path, self.label, self.num_label = list(), list(), list(), list()
         self.tokenizer = tokenizer
         self.size = size
         self.placeholder_token = args.placeholder_token
