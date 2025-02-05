@@ -121,9 +121,9 @@ def parse_args():
     parser.add_argument("--allow_tf32", action="store_true",
                         help="Whether or not to allow TF32 on Ampere GPUs. Can be used to speed up training."
                              " For more information, see https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices")
-    parser.add_argument( "--report_to", type=str, default="tensorboard",
-                         help='The integration to report the results and logs to. Supported platforms are `"tensorboard"`'
-                              ' (default), `"wandb"` and `"comet_ml"`. Use `"all"` to report to all integrations.')
+    parser.add_argument("--report_to", type=str, default="tensorboard",
+                        help='The integration to report the results and logs to. Supported platforms are `"tensorboard"`'
+                             ' (default), `"wandb"` and `"comet_ml"`. Use `"all"` to report to all integrations.')
     parser.add_argument("--local_rank", type=int, default=-1,
                         help="For distributed training: local_rank")
     parser.add_argument("--data_set", type=str, default='train', choices=['train', 'test'],
@@ -141,7 +141,7 @@ def parse_args():
     parser.add_argument("--cosine_loss", default=False, action="store_true",
                         help="Use classification loss")
     parser.add_argument("--filter_frames", type=bool, default=True,
-                        help="Choose whether or not to use previously detected frames as informative frames.",)
+                        help="Choose whether or not to use previously detected frames as informative frames.", )
     parser.add_argument("--filter_unmatch_videos", type=bool, default=True,
                         help="Choose whether or not to filter videos whose visuals and audio do not match.")
     parser.add_argument("--filter_low_quality_imgs", type=bool, default=True,
@@ -332,9 +332,9 @@ def train():
         for step, batch in enumerate(train_dataloader):
 
             with accelerator.accumulate(model):
-
                 # Convert images to latent space
-                latents = accelerator.unwrap_model(model).vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample().detach()
+                latents = accelerator.unwrap_model(model).vae.encode(
+                    batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample().detach()
                 latents = latents * 0.18215
 
                 # Sample noise that we'll add to the latents
@@ -349,38 +349,37 @@ def train():
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
                 with torch.cuda.amp.autocast(dtype=torch.float32):
                     audio_values = batch["audio_values"].to(accelerator.device).to(dtype=weight_dtype)
-                    aud_features = accelerator.unwrap_model(model).aud_encoder.extract_features(audio_values)[1].to(dtype=weight_dtype)
+                    aud_features = accelerator.unwrap_model(model).aud_encoder.extract_features(audio_values)[1].to(
+                        dtype=weight_dtype)
                 audio_token = accelerator.unwrap_model(model).embedder(aud_features)
 
-                if global_step > args.lr_warmup_steps * 2:
-                    # Get the text embedding for conditioning
-                    encoder_hidden_states = accelerator.unwrap_model(model).text_encoder(
-                        audio_token, input_ids=batch['input_ids'])[0].to(dtype=weight_dtype)
+                # Get the text embedding for conditioning
+                encoder_hidden_states = accelerator.unwrap_model(model).text_encoder(
+                    audio_token, input_ids=batch['input_ids'])[0].to(dtype=weight_dtype)
 
-                    # Predict the noise residual
-                    model_pred = accelerator.unwrap_model(model).unet(noisy_latents, timesteps, encoder_hidden_states).sample
+                # Predict the noise residual
+                model_pred = accelerator.unwrap_model(model).unet(noisy_latents, timesteps,
+                                                                  encoder_hidden_states).sample
 
-                    # Get the target for loss depending on the prediction type
-                    if noise_scheduler.config.prediction_type == "epsilon":
-                        target = noise
-                    elif noise_scheduler.config.prediction_type == "v_prediction":
-                        target = noise_scheduler.get_velocity(latents, noise, timesteps)
-                    else:
-                        raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
-
-                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
-
-                    if len(audio_token.shape) > 2:
-                        norm_dim = 2
-                    else:
-                        norm_dim = 1
-
-                    # add regularization
-                    reg_loss = args.lambda_a * torch.mean(torch.abs(audio_token)) + \
-                               args.lambda_b * (torch.norm(audio_token, p=2, dim=norm_dim) ** 2).mean()
-                    loss += reg_loss
+                # Get the target for loss depending on the prediction type
+                if noise_scheduler.config.prediction_type == "epsilon":
+                    target = noise
+                elif noise_scheduler.config.prediction_type == "v_prediction":
+                    target = noise_scheduler.get_velocity(latents, noise, timesteps)
                 else:
-                    loss = 0
+                    raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
+
+                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+
+                if len(audio_token.shape) > 2:
+                    norm_dim = 2
+                else:
+                    norm_dim = 1
+
+                # add regularization
+                reg_loss = args.lambda_a * torch.mean(torch.abs(audio_token)) + \
+                           args.lambda_b * (torch.norm(audio_token, p=2, dim=norm_dim) ** 2).mean()
+                loss += reg_loss
 
                 if args.cosine_loss:
                     if args.debug and flag_debug_print[0]:
@@ -406,7 +405,7 @@ def train():
                         print(f"audio token dim: {audio_token.shape}\nlabel_embedding dim: {label_embedding.shape}\n"
                               f"input ids dim: {len(input_ids)}", )
                         flag_debug_print[1] = False
-                    nce_loss = info_nce_loss_fn(audio_token, label_embedding, input_ids)
+                    nce_loss = info_nce_loss_fn(audio_token, label_embedding, batch['num_label'])
                     loss += args.lambda_d * nce_loss
 
                 accelerator.backward(loss)
@@ -427,13 +426,18 @@ def train():
                             print(f"cosine_loss: {(args.lambda_c * cosine_penalty).detach().item()}")
                     accelerator.wait_for_everyone()
                     if accelerator.is_main_process:
-                        save_path = os.path.join(args.output_dir, f"weights/{args.run_name}_learned_embeds-{global_step}.bin")
+                        save_path = os.path.join(args.output_dir,
+                                                 f"weights/{args.run_name}_learned_embeds-{global_step}.bin")
                         save_progress(accelerator.unwrap_model(model).embedder, save_path)
                         if args.lora:
-                            save_path = os.path.join(args.output_dir, f"weights/{args.run_name}_lora_layers_learned_embeds-{global_step}.bin")
+                            save_path = os.path.join(args.output_dir,
+                                                     f"weights/{args.run_name}_lora_layers_learned_embeds-{global_step}.bin")
                             save_progress(accelerator.unwrap_model(model).lora_layers, save_path)
-
-            logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
+            if args.infoNCE_loss:
+                logs = {"loss": loss.detach().item(), "infoNCE": nce_loss.detach().item(),
+                        "lr": lr_scheduler.get_last_lr()[0]}
+            else:
+                logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 

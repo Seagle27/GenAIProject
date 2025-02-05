@@ -86,6 +86,7 @@ class VGGSound(Dataset):
         return self._length
 
     def prepare_dataset(self, samples):
+        label_to_idx = {label: i for i, label in enumerate(self.unique_labels)}
         df = self.df[self.df["train/test split"] == self.data_set]
         for _, row in df.iterrows():
             file_name = f"{row['YouTube ID']}_{row['start seconds']:06d}"
@@ -93,6 +94,7 @@ class VGGSound(Dataset):
                 self.audio_path.append(os.path.join(self.base_dir, row["label"], 'audio', file_name + ".wav"))
                 self.image_path.append(os.path.join(self.base_dir, row["label"], 'image', file_name + ".jpg"))
                 self.label.append(row["label"])
+                self.num_label.append(label_to_idx[row["label"]])
 
     def img_proc(self, img_path):
         image = cv2.imread(img_path)
@@ -135,6 +137,7 @@ class VGGSound(Dataset):
         example["input_ids"] = self.txt_proc()
         example['label'] = self.label[i % self.num_samples]
         example["audio_values"] = self.aud_proc_beats(aud, rand_sec)
+        example['num_label'] = self.num_label[i % self.num_samples]
         example["pixel_values"] = self.img_proc(img) if self.data_set == "train" else 0
         example["full_name"] = aud.split('/')[-1][:-4]
         return example
