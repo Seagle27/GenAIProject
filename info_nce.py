@@ -43,3 +43,53 @@ class SinglePositiveInfoNCE(nn.Module):
 
         # Extract diagonal elements (positive pairs) and compute mean loss
         return -log_probs.diag().mean()
+
+
+class AudioAudioInfoNCE(nn.Module):
+    """
+    InfoNCE loss for aligning audio embeddings.
+    For each anchor embedding, all other embeddings with the same label are
+    considered positives. The loss is computed as the negative log probability
+    assigned to the positive pairs when the similarity scores (excluding self)
+    are passed through a softmax.
+    """
+    def __init__(self, temperature=0.07):
+        super().__init__()
+        self.temperature = temperature
+
+    def forward(self, audio_embeddings, labels):
+        """
+        audio_embeddings: Tensor of shape (batch_size, embed_dim)
+        labels:           Tensor of shape (batch_size,) with integer class labels
+
+        Returns:
+          A scalar loss value.
+        """
+        # Normalize the embeddings to have unit norm.
+        audio_embeddings = F.normalize(audio_embeddings, dim=-1)
+
+        # Compute the similarity matrix [B, B] scaled by the temperature.
+        sim_matrix = torch.matmul(audio_embeddings, audio_embeddings.T) / self.temperature
+
+        batch_size = sim_matrix.size(0)
+        # Create a boolean mask for the diagonal (self-similarity) and set them to -inf.
+        diag_mask = torch.eye(batch_size, dtype=torch.bool, device=sim_matrix.device)
+        sim_matrix.masked_fill_(diag_mask, float('-inf'))
+
+        # Compute the log-softmax over each row.
+        log_probs = F.log_softmax(sim_matrix, dim=1)
+
+        # Create a mask for positive pairs:
+        # Two samples are positive if they have the same label.
+        # (We already excluded self-similarities above.)
+        labels = labels.unsqueeze(1)  # [B, 1]
+        positive_mask = (labels == labels.T)
+        positive_mask.masked_fill_(diag_mask, False)  # ensure self-pairs are not used
+
+        # Compute the loss:
+        # For each anchor i, average the negative log probability over all positive pairs.
+        # We sum over all positive pairs and divide by the total number of positive pairs.
+        num_positives = positive_mask.float().sum()
+        loss = - (log_probs * positive_mask.float()).sum() / (num_positives + 1e-8)
+
+        return loss
