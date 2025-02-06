@@ -40,7 +40,7 @@ from tqdm.auto import tqdm
 from transformers import CLIPTokenizer
 from modules.AudioToken.AudioToken import AudioTokenWrapper
 from data.dataloader import VGGSound
-from info_nce import SinglePositiveInfoNCE
+from info_nce import SinglePositiveInfoNCE, AudioAudioInfoNCESymmetric
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.12.0")
@@ -289,6 +289,7 @@ def train():
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
     info_nce_loss_fn = SinglePositiveInfoNCE().to(accelerator.device)
+    audio_nce_loss_fn = AudioAudioInfoNCESymmetric().to(accelerator.device)
 
     # Prepare everything with our `accelerator`.
     model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
@@ -405,10 +406,11 @@ def train():
                         print(f"audio token dim: {audio_token.shape}\nlabel_embedding dim: {label_embedding.shape}\n"
                               f"input ids dim: {len(input_ids)}", )
                         flag_debug_print[1] = False
-                    nce_loss1 = info_nce_loss_fn(audio_token, label_embedding, batch['num_label'])
-                    nce_loss2 = info_nce_loss_fn(label_embedding, audio_token, batch['num_label'])
+                    nce_loss1 = info_nce_loss_fn(label_embedding, audio_token, batch['num_label'])
+                    nce_loss2 = info_nce_loss_fn(audio_token, label_embedding, batch['num_label'])
+                    aud_nce_loss = audio_nce_loss_fn(audio_token, batch['num_label'])
                     nce_loss = (nce_loss1 + nce_loss2).mean()
-                    loss += args.lambda_d * nce_loss
+                    loss += args.lambda_d * (aud_nce_loss + nce_loss)
 
                 accelerator.backward(loss)
                 optimizer.step()
@@ -437,6 +439,7 @@ def train():
                             save_progress(accelerator.unwrap_model(model).lora_layers, save_path)
             if args.infoNCE_loss:
                 logs = {"loss": loss.detach().item(), "infoNCE": nce_loss.detach().item(),
+                        "AudInfoNce": aud_nce_loss.detach().item(),
                         "lr": lr_scheduler.get_last_lr()[0]}
             else:
                 logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}

@@ -45,51 +45,65 @@ class SinglePositiveInfoNCE(nn.Module):
         return -log_probs.diag().mean()
 
 
-class AudioAudioInfoNCE(nn.Module):
+class AudioAudioInfoNCESymmetric(nn.Module):
     """
-    InfoNCE loss for aligning audio embeddings.
-    For each anchor embedding, all other embeddings with the same label are
-    considered positives. The loss is computed as the negative log probability
-    assigned to the positive pairs when the similarity scores (excluding self)
-    are passed through a softmax.
+    For each anchor i, the loss is defined as:
+      L_i = -log ( sum_{j in P(i)} exp(s_ij/t) / sum_{k != i} exp(s_ik/t) )
+    where P(i) contains all indices j (excluding i) with the same label as i.
     """
+
     def __init__(self, temperature=0.07):
         super().__init__()
         self.temperature = temperature
 
     def forward(self, audio_embeddings, labels):
         """
-        audio_embeddings: Tensor of shape (batch_size, embed_dim)
-        labels:           Tensor of shape (batch_size,) with integer class labels
+        Args:
+            audio_embeddings: Tensor of shape (batch_size, embed_dim)
+            labels:           Tensor of shape (batch_size,) with integer class labels
 
         Returns:
-          A scalar loss value.
+            A scalar loss value.
         """
-        # Normalize the embeddings to have unit norm.
+        batch_size = audio_embeddings.size(0)
+        if batch_size < 2:
+            # Not enough samples for contrastive learning
+            return torch.tensor(0.0, device=audio_embeddings.device, requires_grad=True)
+
+        # Normalize the embeddings to unit norm.
         audio_embeddings = F.normalize(audio_embeddings, dim=-1)
 
-        # Compute the similarity matrix [B, B] scaled by the temperature.
+        # Compute the similarity matrix and scale by temperature.
+        # Shape: (B, B) where s_ij = (audio_i · audio_j) / temperature.
         sim_matrix = torch.matmul(audio_embeddings, audio_embeddings.T) / self.temperature
 
-        batch_size = sim_matrix.size(0)
-        # Create a boolean mask for the diagonal (self-similarity) and set them to -inf.
+        # Remove self-similarity from both numerator and denominator.
+        # We mask the diagonal by setting it to -infinity so that exp(-inf) becomes 0.
         diag_mask = torch.eye(batch_size, dtype=torch.bool, device=sim_matrix.device)
-        sim_matrix.masked_fill_(diag_mask, float('-inf'))
+        sim_matrix = sim_matrix.masked_fill(diag_mask, float('-inf'))
 
-        # Compute the log-softmax over each row.
-        log_probs = F.log_softmax(sim_matrix, dim=1)
+        # Exponentiate the similarity scores.
+        exp_sim = torch.exp(sim_matrix)
 
-        # Create a mask for positive pairs:
-        # Two samples are positive if they have the same label.
-        # (We already excluded self-similarities above.)
-        labels = labels.unsqueeze(1)  # [B, 1]
-        positive_mask = (labels == labels.T)
-        positive_mask.masked_fill_(diag_mask, False)  # ensure self-pairs are not used
+        # Denominator: sum over all non-self similarities for each anchor.
+        denom = exp_sim.sum(dim=1)  # Shape: (B,)
 
-        # Compute the loss:
-        # For each anchor i, average the negative log probability over all positive pairs.
-        # We sum over all positive pairs and divide by the total number of positive pairs.
-        num_positives = positive_mask.float().sum()
-        loss = - (log_probs * positive_mask.float()).sum() / (num_positives + 1e-8)
+        # Build the positive mask: positives are the pairs with the same label.
+        # Since self-similarities are already removed, we need to exclude them explicitly.
+        labels = labels.unsqueeze(1)  # shape becomes (B, 1)
+        positive_mask = (labels == labels.T).float()
+        # Remove self-comparisons by zeroing out the diagonal.
+        positive_mask = positive_mask.masked_fill(diag_mask, 0)
 
-        return loss
+        # Numerator: sum over all positives.
+        numerator = (exp_sim * positive_mask).sum(dim=1)  # Shape: (B,)
+
+        # Only compute loss for anchors that have at least one positive.
+        valid = numerator > 0
+        if valid.sum() == 0:
+            return torch.tensor(0.0, device=audio_embeddings.device, requires_grad=True)
+
+        # Compute per-anchor loss as described:
+        # L_i = - log(numerator_i / denominator_i)
+        loss = -torch.log(numerator[valid] / (denom[valid] + 1e-8))
+        return loss.mean()
