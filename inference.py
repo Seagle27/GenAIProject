@@ -84,6 +84,8 @@ def parse_args():
                         help="Select the number of seconds of audio you want in each test-sample.")
     parser.add_argument("--lora", type=bool, default=False,
                         help="Whether load Lora layers or not")
+    parser.add_argument("--test_batch_size", type=int, default=1,
+                        help="Batch size (per device) for the training dataloader.")
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -136,6 +138,8 @@ def inference(args):
     if args.seed is not None:
         set_seed(args.seed)
 
+    print(f"SEED: {args.seed}")
+
     # Load tokenizer
     if args.tokenizer_name:
         tokenizer = CLIPTokenizer.from_pretrained(args.tokenizer_name)
@@ -171,7 +175,7 @@ def inference(args):
     )
 
     test_dataloader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=1, shuffle=True, num_workers=args.dataloader_num_workers
+        test_dataset, batch_size=args.test_batch_size, shuffle=True, num_workers=args.dataloader_num_workers
     )
 
     # Prepare everything with our `accelerator`.
@@ -183,36 +187,48 @@ def inference(args):
     # Resize the token embeddings as we are adding new special tokens to the tokenizer
     accelerator.unwrap_model(at_model).text_encoder.resize_token_embeddings(len(tokenizer))
 
+    # Instead of instantiating the pipeline in every loop iteration, create it once here.
+    pipeline = StableDiffusionPipeline.from_pretrained(
+        args.pretrained_model_name_or_path,
+        tokenizer=tokenizer,
+        text_encoder=accelerator.unwrap_model(at_model).text_encoder,
+        vae=accelerator.unwrap_model(at_model).vae,
+        unet=accelerator.unwrap_model(at_model).unet,
+    ).to(accelerator.device)
+
+    # Optional: enable more memory‑efficient attention if available.
+    try:
+        pipeline.enable_xformers_memory_efficient_attention()
+    except Exception:
+        pipeline.enable_attention_slicing("auto")
+
     prompt = args.prompt
 
     for step, batch in enumerate(test_dataloader):
+        print(f"Generating Image {step + 1}/{len(test_dataloader)}")
         if step >= args.generation_steps:
             break
         save_path = os.path.join(imgs_save_path, f'{batch["full_name"][0]}_{batch["label"][0]}.png')
         if os.path.isfile(save_path):
-            print(f"Skipping {save_path}")
+            # print(f"Skipping {save_path}")
             continue
         # Audio's feature extraction
         with torch.cuda.amp.autocast(dtype=torch.float32):
             audio_values = batch["audio_values"].to(accelerator.device).to(dtype=weight_dtype)
-            aud_features = accelerator.unwrap_model(at_model).aud_encoder.extract_features(audio_values)[1].to(dtype=weight_dtype)
+            aud_features = accelerator.unwrap_model(at_model).aud_encoder.extract_features(audio_values)[1].to(
+                dtype=weight_dtype)
         audio_token = accelerator.unwrap_model(at_model).embedder(aud_features)
 
         token_embeds = at_model.text_encoder.get_input_embeddings().weight.data
         token_embeds[placeholder_token_id] = audio_token.clone()
 
-        pipeline = StableDiffusionPipeline.from_pretrained(
-            args.pretrained_model_name_or_path,
-            tokenizer=tokenizer,
-            text_encoder=accelerator.unwrap_model(at_model).text_encoder,
-            vae=accelerator.unwrap_model(at_model).vae,
-            unet=accelerator.unwrap_model(at_model).unet,
-        ).to(accelerator.device)
+        pipeline.unet.set_attention_slice(None)
+        pipeline._last_prompt = None
         image = pipeline(prompt, num_inference_steps=args.num_inference_steps, guidance_scale=7.5).images[0]
         image.save(save_path)
 
         # Extract audio values as a NumPy array
-        audio_numpy = audio_values[0].cpu().numpy()  # Assuming batch dimension is 1
+        audio_numpy = audio_values[0].to(dtype=torch.float32).cpu().numpy()  # Assuming batch dimension is 1
 
         # Define the sample rate (modify as needed)
         sample_rate = 16000  # Typical sample rate for audio processing
