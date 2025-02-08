@@ -13,3 +13,6 @@ soundfile
 sox
 fsspec==2024.6.1
 gcsfs==2024.6.1
+pytorch-fid
+git+https://github.com/descriptinc/lyrebird-wav2clip.git
+git+https://github.com/openai/CLIP.git
